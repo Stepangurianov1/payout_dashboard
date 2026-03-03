@@ -41,7 +41,12 @@ engine_dwh = create_engine(
 
 @cache.memoize(timeout=300)
 def load_payout_engine_info_cached():
-    return pd.read_sql_table("payout_engine_info", engine_dwh, schema="cascade")
+    query = """
+    SELECT *
+    FROM cascade.payout_engine_info
+    WHERE order_status IS DISTINCT FROM 'new'
+    """
+    return pd.read_sql_query(query, engine_dwh)
 
 
 df = load_payout_engine_info_cached()
@@ -433,6 +438,10 @@ app.layout = html.Div(
             "Клик по бару 15‑минутного окна → провал в шлюзы. "
             "Клик по столбцу шлюза → провал в трейдеров.",
             style={"textAlign": "center", "color": "#9ca3af", "marginBottom": "30px"},
+        ),
+        html.P(
+            "Примечание: в расчетах исключены записи с order_status = 'new'.",
+            style={"textAlign": "center", "color": "#fbbf24", "marginTop": "-18px", "marginBottom": "18px"},
         ),
 
         html.Div(
