@@ -44,7 +44,7 @@ def load_payout_engine_info_cached():
     query = """
     SELECT *
     FROM cascade.payout_engine_info
-    WHERE order_status IS DISTINCT FROM 'new'
+    WHERE order_status <> 'new' and order_status is not null
     """
     return pd.read_sql_query(query, engine_dwh)
 
