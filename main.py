@@ -15,7 +15,7 @@ external_stylesheets = [
 ]
 
 app: Dash = dash.Dash(__name__, external_stylesheets=external_stylesheets)
-app.title = "Funnel Dashboard (Demo)"
+app.title = "Payout Dashboard"
 
 cache = Cache(
     app.server,
@@ -112,7 +112,7 @@ def make_time_agg(df_):
     return agg
 
 
-def make_gateway_conv(df_):
+def make_gateway_conv(df_, metric_mode="take"):
     if df_.empty:
         return pd.DataFrame(
             columns=[
@@ -137,6 +137,13 @@ def make_gateway_conv(df_):
                 "orders_count_wo_new",
                 lambda s: s[work_df.loc[s.index, "status_from_engine"] == "rejected by engine"].sum(),
             ),
+            success_orders=(
+                "orders_count_wo_new",
+                lambda s: s[
+                    (work_df.loc[s.index, "status_from_engine"] != "rejected by engine")
+                    & (work_df.loc[s.index, "order_status"] == "success")
+                ].sum(),
+            ),
         )
     )
     grouped = grouped[grouped["total_orders"] > 0]
@@ -152,6 +159,47 @@ def make_gateway_conv(df_):
             ]
         )
     grouped["non_rejected_orders"] = grouped["total_orders"] - grouped["rejected_orders"]
+    if metric_mode == "success":
+        grouped = grouped[grouped["non_rejected_orders"] > 0]
+        if grouped.empty:
+            return pd.DataFrame(
+                columns=["engine", "status_group", "orders", "total_orders", "pct", "conversion_pct"]
+            )
+
+        grouped["not_success_orders"] = grouped["non_rejected_orders"] - grouped["success_orders"]
+        grouped["success_pct"] = np.where(
+            grouped["non_rejected_orders"] > 0,
+            grouped["success_orders"] / grouped["non_rejected_orders"] * 100,
+            0.0,
+        )
+        grouped["not_success_pct"] = 100 - grouped["success_pct"]
+        grouped["conversion_pct"] = grouped["success_pct"]
+
+        result = pd.concat(
+            [
+                grouped[["engine", "not_success_orders", "non_rejected_orders", "not_success_pct", "conversion_pct"]]
+                .rename(
+                    columns={
+                        "not_success_orders": "orders",
+                        "non_rejected_orders": "total_orders",
+                        "not_success_pct": "pct",
+                    }
+                )
+                .assign(status_group="not-success"),
+                grouped[["engine", "success_orders", "non_rejected_orders", "success_pct", "conversion_pct"]]
+                .rename(
+                    columns={
+                        "success_orders": "orders",
+                        "non_rejected_orders": "total_orders",
+                        "success_pct": "pct",
+                    }
+                )
+                .assign(status_group="success"),
+            ],
+            ignore_index=True,
+        )
+        return result[["engine", "status_group", "orders", "total_orders", "pct", "conversion_pct"]]
+
     grouped["rejected_pct"] = np.where(
         grouped["total_orders"] > 0,
         grouped["rejected_orders"] / grouped["total_orders"] * 100,
@@ -166,11 +214,105 @@ def make_gateway_conv(df_):
             .assign(status_group="rejected"),
             grouped[["engine", "non_rejected_orders", "total_orders", "conversion_pct"]]
             .rename(columns={"non_rejected_orders": "orders", "conversion_pct": "pct"})
-            .assign(status_group="non-rejected", conversion_pct=grouped["conversion_pct"]),
+            .assign(status_group="non-rejected"),
         ],
         ignore_index=True,
     )
     return result[["engine", "status_group", "orders", "total_orders", "pct", "conversion_pct"]]
+
+
+def make_gateway_conv_timeseries(df_, metric_mode="take"):
+    if df_.empty:
+        return pd.DataFrame(
+            columns=["period_start", "status_group", "orders", "total_orders", "pct", "conversion_pct"]
+        )
+
+    grouped = (
+        df_.groupby("period_start", as_index=False)
+        .agg(
+            total_orders=("orders_count_wo_new", "sum"),
+            rejected_orders=(
+                "orders_count_wo_new",
+                lambda s: s[df_.loc[s.index, "status_from_engine"] == "rejected by engine"].sum(),
+            ),
+            success_orders=(
+                "orders_count_wo_new",
+                lambda s: s[
+                    (df_.loc[s.index, "status_from_engine"] != "rejected by engine")
+                    & (df_.loc[s.index, "order_status"] == "success")
+                ].sum(),
+            ),
+        )
+    ).sort_values("period_start")
+
+    grouped = grouped[grouped["total_orders"] > 0]
+    if grouped.empty:
+        return pd.DataFrame(
+            columns=["period_start", "status_group", "orders", "total_orders", "pct", "conversion_pct"]
+        )
+
+    grouped["non_rejected_orders"] = grouped["total_orders"] - grouped["rejected_orders"]
+
+    if metric_mode == "success":
+        grouped = grouped[grouped["non_rejected_orders"] > 0]
+        if grouped.empty:
+            return pd.DataFrame(
+                columns=["period_start", "status_group", "orders", "total_orders", "pct", "conversion_pct"]
+            )
+
+        grouped["not_success_orders"] = grouped["non_rejected_orders"] - grouped["success_orders"]
+        grouped["success_pct"] = np.where(
+            grouped["non_rejected_orders"] > 0,
+            grouped["success_orders"] / grouped["non_rejected_orders"] * 100,
+            0.0,
+        )
+        grouped["not_success_pct"] = 100 - grouped["success_pct"]
+        grouped["conversion_pct"] = grouped["success_pct"]
+
+        result = pd.concat(
+            [
+                grouped[["period_start", "not_success_orders", "non_rejected_orders", "not_success_pct", "conversion_pct"]]
+                .rename(
+                    columns={
+                        "not_success_orders": "orders",
+                        "non_rejected_orders": "total_orders",
+                        "not_success_pct": "pct",
+                    }
+                )
+                .assign(status_group="not-success"),
+                grouped[["period_start", "success_orders", "non_rejected_orders", "success_pct", "conversion_pct"]]
+                .rename(
+                    columns={
+                        "success_orders": "orders",
+                        "non_rejected_orders": "total_orders",
+                        "success_pct": "pct",
+                    }
+                )
+                .assign(status_group="success"),
+            ],
+            ignore_index=True,
+        )
+        return result[["period_start", "status_group", "orders", "total_orders", "pct", "conversion_pct"]]
+
+    grouped["rejected_pct"] = np.where(
+        grouped["total_orders"] > 0,
+        grouped["rejected_orders"] / grouped["total_orders"] * 100,
+        0.0,
+    )
+    grouped["conversion_pct"] = 100 - grouped["rejected_pct"]
+
+    result = pd.concat(
+        [
+            grouped[["period_start", "rejected_orders", "total_orders", "rejected_pct", "conversion_pct"]]
+            .rename(columns={"rejected_orders": "orders", "rejected_pct": "pct"})
+            .assign(status_group="rejected"),
+            grouped[["period_start", "non_rejected_orders", "total_orders", "conversion_pct"]]
+            .rename(columns={"non_rejected_orders": "orders", "conversion_pct": "pct"})
+            .assign(status_group="non-rejected"),
+        ],
+        ignore_index=True,
+    )
+    return result[["period_start", "status_group", "orders", "total_orders", "pct", "conversion_pct"]]
 
 
 def make_trader_conv(df_, gateway, time_window=None):
@@ -236,7 +378,7 @@ def make_gateway_conv_daily(df_):
     return daily
 
 
-def make_gateway_conv_timeseries(df_, gateway):
+def make_gateway_conv_timeseries_legacy(df_, gateway):
     """
     Почасовая/помежеутковая (по slot_15m) конверсия для одного шлюза:
     success / fail, нормировано до 100%.
@@ -284,7 +426,7 @@ app.layout = html.Div(
     style={"padding": "20px", "backgroundColor": "#0f172a", "color": "#e5e7eb", "minHeight": "100vh"},
     children=[
         html.H2(
-            "Funnel Dashboard (demo)",
+            "Payout Dashboard",
             style={"textAlign": "center", "marginBottom": "10px"},
         ),
         html.P(
@@ -372,14 +514,28 @@ app.layout = html.Div(
         ),
 
         # скрытые стейты для drill-down
-        dcc.Store(id="selected-slot"),
         dcc.Store(id="selected-gateway"),
 
         html.Div(
             children=[
-                dcc.Graph(id="time-bar-chart", animate=True, config={"displayModeBar": False}),
+                dcc.Graph(id="time-bar-chart", animate=False, config={"displayModeBar": False}),
             ],
             style={"marginBottom": "24px"},
+        ),
+        html.Div(
+            style={"display": "flex", "justifyContent": "center", "marginTop": "-8px", "marginBottom": "12px"},
+            children=[
+                dcc.RadioItems(
+                    id="conversion-mode",
+                    options=[
+                        {"label": "Во взятие", "value": "take"},
+                        {"label": "В success", "value": "success"},
+                    ],
+                    value="take",
+                    inline=True,
+                    labelStyle={"marginRight": "14px"},
+                ),
+            ],
         ),
         html.Div(
             style={"display": "flex", "gap": "24px"},
@@ -387,13 +543,13 @@ app.layout = html.Div(
                 html.Div(
                     children=[
                         html.H4("Конверсия во взятие ордера шлюзом", style={"textAlign": "center"}),
-                        dcc.Graph(id="gateway-conv-chart", animate=True, config={"displayModeBar": False}),
+                        dcc.Graph(id="gateway-conv-chart", animate=False, config={"displayModeBar": False}),
                     ],
                     style={"flex": "1"},
                 ),
                 html.Div(
                     children=[
-                        html.H4("Конверсия по трейдерам шлюза Aifory", style={"textAlign": "center"}),
+                        html.H4("Динамика конверсии выбранного шлюза", style={"textAlign": "center"}),
                         dcc.Graph(id="trader-conv-chart", animate=True, config={"displayModeBar": False}),
                     ],
                     style={"flex": "1"},
@@ -511,17 +667,35 @@ def update_time_chart(selected_gateways, selected_currencies, start_date, end_da
             )
         )
 
-    # Добавление разбивки по статусу с помощью цвета
+    # Агрегация до уровня слот+статус, чтобы разбивка в hover была корректной.
+    agg = (
+        agg.groupby(["period_start", "status_from_engine"], as_index=False)
+        .agg(orders_count=("orders_count", "sum"))
+        .sort_values("period_start")
+    )
+    agg["slot_total_orders"] = agg.groupby("period_start")["orders_count"].transform("sum")
+    first_status_in_slot = agg.groupby("period_start")["status_from_engine"].transform("min")
+    agg["total_line"] = np.where(
+        agg["status_from_engine"] == first_status_in_slot,
+        "<br>orders(total)=" + agg["slot_total_orders"].round(0).astype(int).astype(str),
+        "",
+    )
+
     fig = px.bar(
         agg,
         x="period_start",
         y="orders_count",
         color="status_from_engine",  # Разбивка по статусу ордера
+        custom_data=["total_line"],
         labels={"period_start": "15‑мин окно", "orders_count": "Кол-во ордеров", "status_from_engine": "Статус ордера"},
         title="Конверсия по статусам ордеров",
     )
     fig.update_traces(
-        hovertemplate="slot=%{x}<br>orders=%{y}<br>status=%{fullData.name}<extra></extra>",
+        hovertemplate=(
+            "slot=%{x}<br>"
+            "status=%{fullData.name}<br>"
+            "orders(status)=%{y}%{customdata[0]}<extra></extra>"
+        ),
     )
     fig.update_layout(
         template="plotly_dark",
@@ -535,23 +709,9 @@ def update_time_chart(selected_gateways, selected_currencies, start_date, end_da
 
 
 @app.callback(
-    Output("selected-slot", "data"),
-    Input("time-bar-chart", "clickData"),
-    prevent_initial_call=True,
-)
-def store_selected_slot(click_data):
-    if not click_data:
-        return dash.no_update
-    x_val = click_data["points"][0]["x"]
-    slot_dt = pd.to_datetime(x_val)
-    start_ts = slot_dt
-    end_ts = slot_dt + timedelta(minutes=15)
-    return {"start": start_ts.isoformat(), "end": end_ts.isoformat()}
-
-
-@app.callback(
     Output("gateway-conv-chart", "figure"),
-    Input("selected-slot", "data"),
+    Input("time-bar-chart", "clickData"),
+    Input("conversion-mode", "value"),
     Input("gateway-filter", "value"),
     Input("currency-filter", "value"),
     Input("date-range-filter", "start_date"),
@@ -560,7 +720,8 @@ def store_selected_slot(click_data):
     Input("end-time-filter", "value"),
 )
 def update_gateway_chart(
-    slot_data,
+    slot_click_data,
+    conversion_mode,
     selected_gateways,
     selected_currencies,
     start_date,
@@ -577,13 +738,14 @@ def update_gateway_chart(
         start_time=start_time,
         end_time=end_time,
     )
-    if slot_data:
-        start_ts = pd.to_datetime(slot_data["start"])
-        end_ts = pd.to_datetime(slot_data["end"])
+    if slot_click_data and slot_click_data.get("points"):
+        x_val = slot_click_data["points"][0]["x"]
+        start_ts = pd.to_datetime(x_val)
+        end_ts = start_ts + timedelta(minutes=15)
         mask = (df_slice[TIME_COL] >= start_ts) & (df_slice[TIME_COL] < end_ts)
         df_slice = df_slice[mask]
 
-    agg = make_gateway_conv(df_slice)
+    agg = make_gateway_conv(df_slice, metric_mode=conversion_mode)
 
     if agg.empty:
         return go.Figure(
@@ -603,13 +765,28 @@ def update_gateway_chart(
             )
         )
 
+    if conversion_mode == "success":
+        status_order = ["not-success", "success"]
+        color_map = {"not-success": "#ef4444", "success": "#22c55e"}
+        title_text = "Структура по шлюзам: success + not-success = 100% (из non-rejected)"
+        formula_text = "conversion(success/non-rejected)"
+    else:
+        status_order = ["rejected", "non-rejected"]
+        color_map = {"rejected": "#ef4444", "non-rejected": "#22c55e"}
+        title_text = "Структура по шлюзам: rejected + non-rejected = 100%"
+        formula_text = "conversion(non-rejected/total)"
+
+    agg["status_group"] = pd.Categorical(agg["status_group"], categories=status_order, ordered=True)
+    agg = agg.sort_values(["engine", "status_group"])
+
     fig = px.bar(
         agg,
         x="engine",
         y="pct",
         color="status_group",
         custom_data=["orders", "total_orders", "conversion_pct"],
-        color_discrete_map={"rejected": "#ef4444", "non-rejected": "#22c55e"},
+        color_discrete_map=color_map,
+        category_orders={"status_group": status_order},
         labels={"engine": "Шлюз", "pct": "Доля ордеров, %"},
     )
     fig.update_layout(
@@ -618,9 +795,7 @@ def update_gateway_chart(
         margin=dict(l=40, r=20, t=60, b=40),
         yaxis=dict(range=[0, 100], title="Конверсия, %"),
         xaxis_title="Шлюз",
-        title=(
-            "Структура по шлюзам: rejected + non-rejected = 100%<br>"
-        ),
+        title=(f"{title_text}<br>"),
         transition_duration=300,
     )
     fig.update_traces(
@@ -629,22 +804,142 @@ def update_gateway_chart(
             "status=%{fullData.name}<br>"
             "share=%{y:.1f}%<br>"
             "orders=%{customdata[0]:.0f} / total=%{customdata[1]:.0f}<br>"
-            "conversion(non-rejected/total)=%{customdata[2]:.1f}%<extra></extra>"
+            f"{formula_text}=%{{customdata[2]:.1f}}%<extra></extra>"
         )
     )
     return fig
 
 
-# @app.callback(
-#     Output("selected-gateway", "data"),
-#     Input("gateway-conv-chart", "clickData"),
-#     prevent_initial_call=True,
-# )
-# def store_selected_gateway(click_data):
-#     if not click_data:
-#         return dash.no_update
-#     gw = click_data["points"][0]["x"]
-#     return {"gateway": gw}
+@app.callback(
+    Output("selected-gateway", "data"),
+    Input("gateway-conv-chart", "clickData"),
+    prevent_initial_call=True,
+)
+def store_selected_gateway(click_data):
+    if not click_data:
+        return dash.no_update
+    gw = click_data["points"][0]["x"]
+    return {"gateway": gw}
+
+
+@app.callback(
+    Output("trader-conv-chart", "figure"),
+    Input("selected-gateway", "data"),
+    Input("conversion-mode", "value"),
+    Input("gateway-filter", "value"),
+    Input("currency-filter", "value"),
+    Input("date-range-filter", "start_date"),
+    Input("date-range-filter", "end_date"),
+    Input("start-time-filter", "value"),
+    Input("end-time-filter", "value"),
+)
+def update_selected_gateway_timeseries(
+    gw_data,
+    conversion_mode,
+    selected_gateways,
+    selected_currencies,
+    start_date,
+    end_date,
+    start_time,
+    end_time,
+):
+    gateway = None
+    if gw_data and "gateway" in gw_data:
+        gateway = gw_data["gateway"]
+    elif selected_gateways:
+        gateway = selected_gateways[0]
+
+    if not gateway:
+        return go.Figure(
+            layout=go.Layout(
+                template="plotly_dark",
+                annotations=[
+                    dict(
+                        text="Кликните по бару шлюза на левом графике",
+                        x=0.5,
+                        y=0.5,
+                        xref="paper",
+                        yref="paper",
+                        showarrow=False,
+                        font=dict(size=14),
+                    )
+                ],
+            )
+        )
+
+    filtered_df = apply_dashboard_filters(
+        df,
+        selected_gateways=selected_gateways,
+        selected_currencies=selected_currencies,
+        start_date=start_date,
+        end_date=end_date,
+        start_time=start_time,
+        end_time=end_time,
+    )
+    filtered_df = filtered_df[filtered_df["engine"].astype(str) == str(gateway)]
+
+    agg = make_gateway_conv_timeseries(filtered_df, metric_mode=conversion_mode)
+    if agg.empty:
+        return go.Figure(
+            layout=go.Layout(
+                template="plotly_dark",
+                annotations=[
+                    dict(
+                        text=f"Нет данных по шлюзу {gateway}",
+                        x=0.5,
+                        y=0.5,
+                        xref="paper",
+                        yref="paper",
+                        showarrow=False,
+                        font=dict(size=14),
+                    )
+                ],
+            )
+        )
+
+    if conversion_mode == "success":
+        status_order = ["not-success", "success"]
+        color_map = {"not-success": "#ef4444", "success": "#22c55e"}
+        formula_text = "conversion(success/non-rejected)"
+        title_text = f"Динамика success-конверсии: {gateway}"
+    else:
+        status_order = ["rejected", "non-rejected"]
+        color_map = {"rejected": "#ef4444", "non-rejected": "#22c55e"}
+        formula_text = "conversion(non-rejected/total)"
+        title_text = gateway
+
+    agg["status_group"] = pd.Categorical(agg["status_group"], categories=status_order, ordered=True)
+    agg = agg.sort_values(["period_start", "status_group"])
+
+    fig = px.bar(
+        agg,
+        x="period_start",
+        y="pct",
+        color="status_group",
+        custom_data=["orders", "total_orders", "conversion_pct"],
+        color_discrete_map=color_map,
+        category_orders={"status_group": status_order},
+        labels={"period_start": "Время", "pct": "Доля, %"},
+    )
+    fig.update_layout(
+        template="plotly_dark",
+        barmode="stack",
+        yaxis=dict(range=[0, 100], title="Конверсия, %"),
+        xaxis_title="15-мин окно",
+        margin=dict(l=40, r=20, t=60, b=40),
+        title=title_text,
+        transition_duration=300,
+    )
+    fig.update_traces(
+        hovertemplate=(
+            "time=%{x}<br>"
+            "status=%{fullData.name}<br>"
+            "share=%{y:.1f}%<br>"
+            "orders=%{customdata[0]:.0f} / total=%{customdata[1]:.0f}<br>"
+            f"{formula_text}=%{{customdata[2]:.1f}}%<extra></extra>"
+        )
+    )
+    return fig
 
 
 # @app.callback(
