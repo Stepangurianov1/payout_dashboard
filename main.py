@@ -46,10 +46,60 @@ def load_payout_engine_info_cached():
 
 df = load_payout_engine_info_cached()
 
+ENGINE_COL = "engine"
+TIME_COL = "period_start"
+CURRENCY_COL = "currency"
+
+df[TIME_COL] = pd.to_datetime(df[TIME_COL], errors="coerce")
+
+time_options = [
+    {"label": f"{hour:02d}:{minute:02d}", "value": f"{hour:02d}:{minute:02d}"}
+    for hour in range(24)
+    for minute in (0, 30)
+]
+default_start_time = "00:00"
+default_end_time = "23:30"
+
+if df[TIME_COL].notna().any():
+    min_dt = df[TIME_COL].min()
+    max_dt = df[TIME_COL].max()
+    default_start_date = min_dt.date().isoformat()
+    default_end_date = max_dt.date().isoformat()
+else:
+    today = datetime.utcnow().date().isoformat()
+    default_start_date = today
+    default_end_date = today
+
 
 # ------------------------
 # Вспомогательные функции агрегации
 # ------------------------
+
+def apply_dashboard_filters(
+    df_,
+    selected_gateways=None,
+    selected_currencies=None,
+    start_date=None,
+    end_date=None,
+    start_time="00:00",
+    end_time="23:30",
+):
+    filtered = df_
+
+    if selected_gateways:
+        filtered = filtered[filtered[ENGINE_COL].astype(str).isin(selected_gateways)]
+
+    if selected_currencies:
+        filtered = filtered[filtered[CURRENCY_COL].astype(str).isin(selected_currencies)]
+
+    if start_date and end_date:
+        start_dt = pd.to_datetime(f"{start_date} {start_time}")
+        end_dt = pd.to_datetime(f"{end_date} {end_time}")
+        if end_dt < start_dt:
+            start_dt, end_dt = end_dt, start_dt
+        filtered = filtered[(filtered[TIME_COL] >= start_dt) & (filtered[TIME_COL] <= end_dt)]
+
+    return filtered
 
 def make_time_agg(df_):
     agg = (
@@ -228,7 +278,8 @@ def make_gateway_conv_timeseries(df_, gateway):
 # Dash-приложение
 # ------------------------
 
-engines = df["engine"].unique()
+engines = sorted(df[ENGINE_COL].dropna().astype(str).unique().tolist())
+currencies = sorted(df[CURRENCY_COL].dropna().astype(str).unique().tolist())
 app.layout = html.Div(
     style={"padding": "20px", "backgroundColor": "#0f172a", "color": "#e5e7eb", "minHeight": "100vh"},
     children=[
@@ -247,34 +298,75 @@ app.layout = html.Div(
             children=[
                 html.Div(
                     children=[
-                        html.Label("Минимальное количество ордеров в 15‑мин окне:", style={"marginRight": "8px"}),
-                        dcc.Slider(
-                            id="min-orders-slider",
-                            min=0,
-                            max=50,
-                            step=5,
-                            value=5,
-                            marks={i: str(i) for i in range(0, 55, 10)},
-                            tooltip={"placement": "bottom", "always_visible": False},
+                        html.Label("Шлюз:", style={"marginRight": "8px"}),
+                        dcc.Dropdown(
+                            id="gateway-filter",
+                            options=[{"label": gw, "value": gw} for gw in engines],
+                            value=[],
+                            multi=True,
+                            placeholder="Все шлюзы",
+                            style={"color": "#111827"},
                         ),
                     ],
                     style={"flex": "1"},
                 ),
                 html.Div(
                     children=[
-                        html.Label("Фильтр статуса:", style={"marginRight": "8px"}),
+                        html.Label("Currency:", style={"marginRight": "8px"}),
                         dcc.Dropdown(
-                            id="status-filter",
-                            options=[
-                                {"label": "Все", "value": "all"},
-                                {"label": "Non-rejected", "value": "non-rejected"},
-                                {"label": "Rejected", "value": "rejected"},
-                            ],
-                            value="all",
-                            clearable=False,
-                            style={"width": "160px", "color": "#111827"},
+                            id="currency-filter",
+                            options=[{"label": cur, "value": cur} for cur in currencies],
+                            value=[],
+                            multi=True,
+                            placeholder="Все валюты",
+                            style={"color": "#111827"},
                         ),
-                    ]
+                    ],
+                    style={"flex": "1"},
+                ),
+                html.Div(
+                    children=[
+                        html.Label("Интервал даты:", style={"marginRight": "8px"}),
+                        dcc.DatePickerRange(
+                            id="date-range-filter",
+                            start_date=default_start_date,
+                            end_date=default_end_date,
+                            display_format="YYYY-MM-DD",
+                            minimum_nights=0,
+                        ),
+                    ],
+                    style={"flex": "1"},
+                ),
+            ],
+        ),
+        html.Div(
+            style={"display": "flex", "gap": "16px", "marginBottom": "20px", "alignItems": "center"},
+            children=[
+                html.Div(
+                    children=[
+                        html.Label("Время от:", style={"marginRight": "8px"}),
+                        dcc.Dropdown(
+                            id="start-time-filter",
+                            options=time_options,
+                            value=default_start_time,
+                            clearable=False,
+                            style={"color": "#111827"},
+                        ),
+                    ],
+                    style={"width": "220px"},
+                ),
+                html.Div(
+                    children=[
+                        html.Label("Время до:", style={"marginRight": "8px"}),
+                        dcc.Dropdown(
+                            id="end-time-filter",
+                            options=time_options,
+                            value=default_end_time,
+                            clearable=False,
+                            style={"color": "#111827"},
+                        ),
+                    ],
+                    style={"width": "220px"},
                 ),
             ],
         ),
@@ -294,7 +386,7 @@ app.layout = html.Div(
             children=[
                 html.Div(
                     children=[
-                        html.H4("Конверсия по шлюзам (окно / drill-down)", style={"textAlign": "center"}),
+                        html.H4("Конверсия во взятие ордера шлюзом", style={"textAlign": "center"}),
                         dcc.Graph(id="gateway-conv-chart", animate=True, config={"displayModeBar": False}),
                     ],
                     style={"flex": "1"},
@@ -381,12 +473,23 @@ app.layout = html.Div(
 
 @app.callback(
     Output("time-bar-chart", "figure"),
-    Input("min-orders-slider", "value"),
+    Input("gateway-filter", "value"),
+    Input("currency-filter", "value"),
+    Input("date-range-filter", "start_date"),
+    Input("date-range-filter", "end_date"),
+    Input("start-time-filter", "value"),
+    Input("end-time-filter", "value"),
 )
-def update_time_chart(min_orders):
-    agg = df
-    if min_orders:
-        agg = agg[agg["orders_count"] >= min_orders]
+def update_time_chart(selected_gateways, selected_currencies, start_date, end_date, start_time, end_time):
+    agg = apply_dashboard_filters(
+        df,
+        selected_gateways=selected_gateways,
+        selected_currencies=selected_currencies,
+        start_date=start_date,
+        end_date=end_date,
+        start_time=start_time,
+        end_time=end_time,
+    )
 
     if agg.empty:
         return go.Figure(
@@ -449,23 +552,38 @@ def store_selected_slot(click_data):
 @app.callback(
     Output("gateway-conv-chart", "figure"),
     Input("selected-slot", "data"),
-    Input("status-filter", "value"),
+    Input("gateway-filter", "value"),
+    Input("currency-filter", "value"),
+    Input("date-range-filter", "start_date"),
+    Input("date-range-filter", "end_date"),
+    Input("start-time-filter", "value"),
+    Input("end-time-filter", "value"),
 )
-def update_gateway_chart(slot_data, status_filter):
-    subtitle = "за весь период"
-    df_slice = df
+def update_gateway_chart(
+    slot_data,
+    selected_gateways,
+    selected_currencies,
+    start_date,
+    end_date,
+    start_time,
+    end_time,
+):
+    df_slice = apply_dashboard_filters(
+        df,
+        selected_gateways=selected_gateways,
+        selected_currencies=selected_currencies,
+        start_date=start_date,
+        end_date=end_date,
+        start_time=start_time,
+        end_time=end_time,
+    )
     if slot_data:
         start_ts = pd.to_datetime(slot_data["start"])
         end_ts = pd.to_datetime(slot_data["end"])
-        subtitle = f"{start_ts:%Y-%m-%d %H:%M} — {end_ts:%H:%M}"
-        if "period_start" in df.columns:
-            mask = (df["period_start"] >= start_ts) & (df["period_start"] < end_ts)
-            df_slice = df[mask]
+        mask = (df_slice[TIME_COL] >= start_ts) & (df_slice[TIME_COL] < end_ts)
+        df_slice = df_slice[mask]
 
     agg = make_gateway_conv(df_slice)
-
-    if status_filter != "all":
-        agg = agg[agg["status_group"] == status_filter]
 
     if agg.empty:
         return go.Figure(
@@ -502,7 +620,6 @@ def update_gateway_chart(slot_data, status_filter):
         xaxis_title="Шлюз",
         title=(
             "Структура по шлюзам: rejected + non-rejected = 100%<br>"
-            f"<sup>{subtitle}</sup>"
         ),
         transition_duration=300,
     )
