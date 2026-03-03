@@ -430,6 +430,8 @@ currencies = sorted(df[CURRENCY_COL].dropna().astype(str).unique().tolist())
 app.layout = html.Div(
     style={"padding": "20px", "backgroundColor": "#0f172a", "color": "#e5e7eb", "minHeight": "100vh"},
     children=[
+        dcc.Location(id="page-url", refresh=False),
+        dcc.Store(id="page-refresh-token"),
         html.H2(
             "Payout Dashboard",
             style={"textAlign": "center", "marginBottom": "10px"},
@@ -637,7 +639,17 @@ app.layout = html.Div(
 # ------------------------
 
 @app.callback(
+    Output("page-refresh-token", "data"),
+    Input("page-url", "href"),
+)
+def refresh_cache_on_page_reload(_href):
+    cache.delete_memoized(load_payout_engine_info_cached)
+    return datetime.utcnow().isoformat()
+
+
+@app.callback(
     Output("time-bar-chart", "figure"),
+    Input("page-refresh-token", "data"),
     Input("gateway-filter", "value"),
     Input("currency-filter", "value"),
     Input("date-range-filter", "start_date"),
@@ -645,9 +657,12 @@ app.layout = html.Div(
     Input("start-time-filter", "value"),
     Input("end-time-filter", "value"),
 )
-def update_time_chart(selected_gateways, selected_currencies, start_date, end_date, start_time, end_time):
+def update_time_chart(_page_refresh_token, selected_gateways, selected_currencies, start_date, end_date, start_time, end_time):
+    df_live = load_payout_engine_info_cached().copy()
+    df_live[TIME_COL] = pd.to_datetime(df_live[TIME_COL], errors="coerce")
+
     agg = apply_dashboard_filters(
-        df,
+        df_live,
         selected_gateways=selected_gateways,
         selected_currencies=selected_currencies,
         start_date=start_date,
@@ -719,6 +734,7 @@ def update_time_chart(selected_gateways, selected_currencies, start_date, end_da
 
 @app.callback(
     Output("gateway-conv-chart", "figure"),
+    Input("page-refresh-token", "data"),
     Input("time-bar-chart", "clickData"),
     Input("conversion-mode", "value"),
     Input("gateway-filter", "value"),
@@ -729,6 +745,7 @@ def update_time_chart(selected_gateways, selected_currencies, start_date, end_da
     Input("end-time-filter", "value"),
 )
 def update_gateway_chart(
+    _page_refresh_token,
     slot_click_data,
     conversion_mode,
     selected_gateways,
@@ -738,8 +755,11 @@ def update_gateway_chart(
     start_time,
     end_time,
 ):
+    df_live = load_payout_engine_info_cached().copy()
+    df_live[TIME_COL] = pd.to_datetime(df_live[TIME_COL], errors="coerce")
+
     df_slice = apply_dashboard_filters(
-        df,
+        df_live,
         selected_gateways=selected_gateways,
         selected_currencies=selected_currencies,
         start_date=start_date,
@@ -833,6 +853,7 @@ def store_selected_gateway(click_data):
 
 @app.callback(
     Output("trader-conv-chart", "figure"),
+    Input("page-refresh-token", "data"),
     Input("selected-gateway", "data"),
     Input("conversion-mode", "value"),
     Input("gateway-filter", "value"),
@@ -843,6 +864,7 @@ def store_selected_gateway(click_data):
     Input("end-time-filter", "value"),
 )
 def update_selected_gateway_timeseries(
+    _page_refresh_token,
     gw_data,
     conversion_mode,
     selected_gateways,
@@ -852,6 +874,9 @@ def update_selected_gateway_timeseries(
     start_time,
     end_time,
 ):
+    df_live = load_payout_engine_info_cached().copy()
+    df_live[TIME_COL] = pd.to_datetime(df_live[TIME_COL], errors="coerce")
+
     gateway = None
     if gw_data and "gateway" in gw_data:
         gateway = gw_data["gateway"]
@@ -877,7 +902,7 @@ def update_selected_gateway_timeseries(
         )
 
     filtered_df = apply_dashboard_filters(
-        df,
+        df_live,
         selected_gateways=selected_gateways,
         selected_currencies=selected_currencies,
         start_date=start_date,
