@@ -447,7 +447,7 @@ app.layout = html.Div(
         ),
 
         html.Div(
-            style={"display": "flex", "gap": "16px", "marginBottom": "20px", "alignItems": "center"},
+            style={"display": "flex", "gap": "16px", "marginBottom": "20px", "alignItems": "flex-end"},
             children=[
                 html.Div(
                     children=[
@@ -486,15 +486,11 @@ app.layout = html.Div(
                             end_date=default_end_date,
                             display_format="YYYY-MM-DD",
                             minimum_nights=0,
+                            style={"color": "#111827"},
                         ),
                     ],
-                    style={"flex": "1"},
+                    style={"width": "320px"},
                 ),
-            ],
-        ),
-        html.Div(
-            style={"display": "flex", "gap": "16px", "marginBottom": "20px", "alignItems": "center"},
-            children=[
                 html.Div(
                     children=[
                         html.Label("Время от:", style={"marginRight": "8px"}),
@@ -506,7 +502,7 @@ app.layout = html.Div(
                             style={"color": "#111827"},
                         ),
                     ],
-                    style={"width": "220px"},
+                    style={"width": "170px"},
                 ),
                 html.Div(
                     children=[
@@ -519,7 +515,7 @@ app.layout = html.Div(
                             style={"color": "#111827"},
                         ),
                     ],
-                    style={"width": "220px"},
+                    style={"width": "170px"},
                 ),
             ],
         ),
